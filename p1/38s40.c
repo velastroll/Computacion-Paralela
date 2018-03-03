@@ -24,12 +24,6 @@ typedef struct {
 	int *posval;
 } Storm;
 
-/* ESTA FUNCION PUEDE SER MODIFICADA */
-/* Funcion para actualizar una posicion de la capa */
-void actualiza( float *layer, int k, int pos, float energia ) {
-	
-}
-
 
 /* FUNCIONES AUXILIARES: No se utilizan dentro de la medida de tiempo, dejar como estan */
 /* Funcion de DEBUG: Imprimir el estado de la capa */
@@ -166,6 +160,11 @@ int main(int argc, char *argv[]) {
 				float energia = (float)storms[i].posval[j*2+1] / 1000;
 				int posicion = storms[i].posval[j*2];
 
+				/**----------------------------------------------------
+				 * 
+				 * PARALELIZAMOS LA FUNCION ACTUALIZA.
+				 * 
+				 * */
 				#pragma omp parallel for firstprivate(energia, posicion)
 				for( k=0; k<layer_size; k++ ) {
 					int distancia = posicion - k;
@@ -185,35 +184,39 @@ int main(int argc, char *argv[]) {
 					/* 5. No sumar si el valor absoluto es menor que umbral */
 					if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
 						layer[k] = layer[k] + energia_k;
-						/* ---------------------------------------------------*/
 				}
+				/* ---------------------------------------------------*/
 			}
 
-			//#pragma omp parallel 
-			//{
-					for( k=0; k<layer_size; k++ ) 
-						layer_copy[k] = layer[k];
 
-					for( k=1; k<layer_size-1; k++ )
-						layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
+				for( k=0; k<layer_size; k++ ) 
+					layer_copy[k] = layer[k];
 
-					for( k=1; k<layer_size-1; k++ ) {					
-						if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
-							if ( layer[k] > maximos[i] ) {
+				#pragma omp parallel for shared(layer, layer_copy), firstprivate(layer_size)
+				for( k=1; k<layer_size-1; k++ )
+					layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
+
+				for( k=1; k<layer_size-1; k++ ) {
+					/**
+					 * Una reestructuacion de las comprobaciones:
+					 * Primero que vea si es maximo, y luego que compruebe sus vecinos.
+					 * Antes, estaba de forma: 	(B&C), A.
+					 * Ahora esta de forma:		A, B, C.
+					 **/
+					if ( layer[k] > maximos[i] ) {			// A			
+						if ( layer[k] > layer[k-1] ) {		// B
+							if ( layer[k] > layer[k+1] ) {  // C
 								maximos[i] = layer[k];
 								posiciones[i] = k;
 							}
 						}
 					}
-
-			//}
+				}
 		}
 
 
-	//}
 
-
-	/**----------------------------------------------------------
+	/**--------------------------------------------------------------------------------------------------
 	 * 
 	 *  FINAL: No optimizar/paralelizar por debajo de este punto */
 

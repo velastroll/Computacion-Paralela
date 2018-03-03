@@ -3,7 +3,7 @@ CFLAGS=-fopenmp -O3 -I.
 DEBUG_FLAGS=-g -DDEBUG
 LIBS=-lm
 
-intento: vendoOpelCorsa.c
+intento: intento.c
 	gcc $(CFLAGS) $< -o $@ $(LIBS)
 
 energy: energy_v2.c
@@ -13,5 +13,5 @@ debug: energy_v2.c
 	gcc $(CFLAGS) $(DEBUG_FLAGS) $< -o $@ $(LIBS)
 
 clean:
-	rm -f energy debug
+	rm -f energy debug intento
 
