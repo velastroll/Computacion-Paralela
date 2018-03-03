@@ -188,7 +188,10 @@ int main(int argc, char *argv[]) {
 				/* ---------------------------------------------------*/
 			}
 
-
+				/**
+				 * PAralelizado este bucle y el de abajo, baja a 33s004 
+				 **/
+				#pragma omp parallel for shared(layer, layer_copy), firstprivate(layer_size)
 				for( k=0; k<layer_size; k++ ) 
 					layer_copy[k] = layer[k];
 
@@ -196,6 +199,8 @@ int main(int argc, char *argv[]) {
 				for( k=1; k<layer_size-1; k++ )
 					layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
+
+				
 				for( k=1; k<layer_size-1; k++ ) {
 					/**
 					 * Una reestructuacion de las comprobaciones:
