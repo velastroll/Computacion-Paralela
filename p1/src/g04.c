@@ -7,8 +7,11 @@
  * (c) 2018 Arturo Gonzalez Escribano
  * Version: 2.0 (Atenuacion no lineal)
  * 
- * ./client -u g04 -x 0DAkBf9r -q openmplb medium.c
+ * Estudiantes del grupo 4:
+ * - Alejandro Sanz
+ * - Alvaro Velasco
  */
+
 #include<stdio.h>
 #include<stdlib.h>
 #include<math.h>
@@ -17,41 +20,24 @@
 
 #define PI	3.14159f
 #define UMBRAL	0.001f
-
-/* Estructura para almacenar los datos de una tormenta de particulas */
 typedef struct {
 	int size;
 	int *posval;
 } Storm;
 
-
-/* FUNCIONES AUXILIARES: No se utilizan dentro de la medida de tiempo, dejar como estan */
-/* Funcion de DEBUG: Imprimir el estado de la capa */
 void debug_print(int layer_size, float *layer, int *posiciones, float *maximos, int num_storms ) {
 	int i,k;
 	if ( layer_size <= 35 ) {
-		/* Recorrer capa */
 		for( k=0; k<layer_size; k++ ) {
-			/* Escribir valor del punto */
 			printf("%10.4f |", layer[k] );
-
-			/* Calcular el numero de caracteres normalizado con el maximo a 60 */
 			int ticks = (int)( 60 * layer[k] / maximos[num_storms-1] );
-
-			/* Escribir todos los caracteres menos el ultimo */
 			for (i=0; i<ticks-1; i++ ) printf("o");
-
-			/* Para maximos locales escribir ultimo caracter especial */
 			if ( k>0 && k<layer_size-1 && layer[k] > layer[k-1] && layer[k] > layer[k+1] )
 				printf("x");
 			else
 				printf("o");
-
-			/* Si el punto es uno de los maximos especiales, annadir marca */
 			for (i=0; i<num_storms; i++) 
 				if ( posiciones[i] == k ) printf(" M%d", i );
-
-			/* Fin de linea */
 			printf("\n");
 		}
 	}
@@ -126,11 +112,9 @@ int main(int argc, char *argv[]) {
 	/* 2. Inicia medida de tiempo */
 	double ttotal = cp_Wtime();
 
-	/* **********************************************************************
-	 *
-	 * COMIENZO: No optimizar/paralelizar el main por encima de este punto 
-	 *
-	 ************************************************************************/
+	/* --------------------------------------------------------------------- *
+	 * COMIENZO: No optimizar/paralelizar el main por encima de este punto   *
+	 *-----------------------------------------------------------------------*/
 
 	/* 3. Reservar memoria para las capas e inicializar a cero */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
@@ -145,85 +129,71 @@ int main(int argc, char *argv[]) {
 		layer_copy[k] = 0.0f;
 		}
 
-
-
 	/* 4. Fase de bombardeos */
-
-
 	
+	/* Bucle que no conseguimos paralelizar debido al 4.3 */
 	for( i=0; i<num_storms; i++) {
 
 		/* 4.1. Suma energia de impactos */
 		/* Para cada particula */		
-			for( j=0; j<storms[i].size; j++ ) {
-			
-				float energia = (float)storms[i].posval[j*2+1] / 1000;
-				int posicion = storms[i].posval[j*2];
+		for( j=0; j<storms[i].size; j++ ) {
+		
+			float energia = (float)storms[i].posval[j*2+1] / 1000;
+			int posicion = storms[i].posval[j*2];
 
-				/**----------------------------------------------------
-				 * 
-				 * PARALELIZAMOS LA FUNCION ACTUALIZA.
-				 * 
-				 * */
-				#pragma omp parallel for firstprivate(energia, posicion)
-				for( k=0; k<layer_size; k++ ) {
-					int distancia = posicion - k;
+			/* ------- PARALELIZAMOS LA FUNCION ACTUALIZA. -------- */
+			#pragma omp parallel for firstprivate(energia, posicion)
+			for( k=0; k<layer_size; k++ ) {
+				int distancia = posicion - k;
 
-					if ( distancia < 0 ) {
-						distancia = - distancia;
-					}
-
-					/* 2. El punto de impacto tiene distancia 1 */
-					distancia = distancia + 1;
-					/* 3. Raiz cuadrada de la distancia */
-					float atenuacion = sqrtf( (float)distancia );
-
-					/* 4. Calcular energia atenuada */
-					float energia_k = energia / atenuacion;
-
-					/* 5. No sumar si el valor absoluto es menor que umbral */
-					if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
-						layer[k] = layer[k] + energia_k;
+				if ( distancia < 0 ) {
+					distancia = - distancia;
 				}
-				/* ---------------------------------------------------*/
-			}
 
-				/**
-				 * PAralelizado este bucle y el de abajo, baja a 33s004 
-				 **/
-				#pragma omp parallel for shared(layer, layer_copy), firstprivate(layer_size)
-				for( k=0; k<layer_size; k++ ) 
-					layer_copy[k] = layer[k];
+				/* 4.1.2. El punto de impacto tiene distancia 1 */
+				distancia = distancia + 1;
+				/* 4.1.3. Raiz cuadrada de la distancia */
+				float atenuacion = sqrtf( (float)distancia );
 
-				#pragma omp parallel for shared(layer, layer_copy), firstprivate(layer_size)
-				for( k=1; k<layer_size-1; k++ )
-					layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
+				/* 4.1.4. Calcular energia atenuada */
+				float energia_k = energia / atenuacion;
 
-
-				
-				for( k=1; k<layer_size-1; k++ ) {
-					/**
-					 * Una reestructuacion de las comprobaciones:
-					 * Primero que vea si es maximo, y luego que compruebe sus vecinos.
-					 * Antes, estaba de forma: 	(B&C), A.
-					 * Ahora esta de forma:		A, B, C.
-					 **/
-					if ( layer[k] > maximos[i] ) {			// A			
-						if ( layer[k] > layer[k-1] ) {		// B
-							if ( layer[k] > layer[k+1] ) {  // C
-								maximos[i] = layer[k];
-								posiciones[i] = k;
-							}
-						}
-					}
-				}
+				/* 4.1.5. No sumar si el valor absoluto es menor que umbral */
+				if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
+					layer[k] = layer[k] + energia_k;
+			} /* --------------------------------------------------- */
 		}
 
+		/* Paralelizado este bucle y el de abajo, el tiempo baja */
+		#pragma omp parallel for shared(layer, layer_copy), firstprivate(layer_size)
+		for( k=0; k<layer_size; k++ ) 
+			layer_copy[k] = layer[k];
+
+		#pragma omp parallel for shared(layer, layer_copy), firstprivate(layer_size)
+		for( k=1; k<layer_size-1; k++ )
+			layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
 
-	/**--------------------------------------------------------------------------------------------------
-	 * 
-	 *  FINAL: No optimizar/paralelizar por debajo de este punto */
+		/*  4.3 : BUCLE QUE DA PROBELMAS PARALELIZAR */				
+		for( k=1; k<layer_size-1; k++ ) {
+			/**
+			 * Una reestructuacion de las comprobaciones:
+			 * Primero que vea si es maximo, y luego que compruebe sus vecinos.
+			 * Antes, estaba de forma: 	(B&C), A.
+			 * Ahora esta de forma:		A, B, C.
+			 **/
+			if ( layer[k] > maximos[i] ) {			// A			
+				if ( layer[k] > layer[k-1] ) {		// B
+					if ( layer[k] > layer[k+1] ) {  // C
+						maximos[i] = layer[k];
+						posiciones[i] = k;
+					}
+				}
+			}
+		}
+	}
+
+	/*----- FINAL: No optimizar/paralelizar por debajo de este punto ----- */
 
 	/* 5. Final de medida de tiempo */
 	ttotal = cp_Wtime() - ttotal;
