@@ -6,7 +6,7 @@ LIBS=-lm
 intento: intento.c
 	gcc $(CFLAGS) $< -o $@ $(LIBS)
 
-best: g04.c
+best: pistacho.c
 	gcc $(CFLAGS) $< -o $@ $(LIBS)
 
 debug-best: g04.c
