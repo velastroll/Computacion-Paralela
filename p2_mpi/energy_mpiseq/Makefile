@@ -4,10 +4,17 @@ DEBUG_FLAGS=-g -DDEBUG
 LIBS=-lm
 CC=mpicc
 
-energy: energy_mpi.c 
+energy: energy_modificado.c 
 	$(CC) $(CFLAGS) $< -o $@ $(LIBS)
-debug: energy_mpi.c
+	
+debug: energy_modificado.c
 	$(CC) $(CFLAGS) $(DEBUG_FLAGS) $< -o $@ $(LIBS)
+
+small:
+	$ mpiexec -n 10 ./energy 20000 ./test/testSmall_20000
+
+medium:
+	$ mpiexec -n 10 ./energy 100000 ./test/testMedium_100000
 
 clean:
 	rm -f energy debug
