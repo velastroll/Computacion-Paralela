@@ -17,75 +17,32 @@
 #define UMBRAL	0.001f
 #define ROOT_RANK 0
 
-/* Estructura para almacenar los datos de una tormenta de particulas */
 typedef struct {
 	int size;
 	int *posval;
 } Storm;
 
-
-
-
-/* ------- ESTA FUNCION PUEDE SER MODIFICADA ------- */
-/*  Funcion para actualizar una posicion de la capa  */
-void actualiza( float *layer, int k, int pos, float energia ) {
-	/* 1. Calcular valor absoluto de la distancia entre el
-		punto de impacto y el punto k de la capa */
-	int distancia = pos - k;
-	if ( distancia < 0 ) distancia = - distancia;
-
-	/* 2. El punto de impacto tiene distancia 1 */
-	distancia = distancia + 1;
-
-	/* 3. Raiz cuadrada de la distancia */
-	float atenuacion = sqrtf( (float)distancia );
-
-	/* 4. Calcular energia atenuada */
-	float energia_k = energia / atenuacion;
-
-	/* 5. No sumar si el valor absoluto es menor que umbral */
-	if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
-		layer[k] = layer[k] + energia_k;
-} /* -------------------------------------------------- */
-
-
-
-
-/* FUNCIONES AUXILIARES: No se utilizan dentro de la medida de tiempo, dejar como estan */
-/* Funcion de DEBUG: Imprimir el estado de la capa */
 void debug_print(int layer_size, float *layer, int *posiciones, float *maximos, int num_storms ) {
 	int i,k;
 	if ( layer_size <= 35 ) {
-		/* Recorrer capa */
 		for( k=0; k<layer_size; k++ ) {
-			/* Escribir valor del punto */
 			printf("%10.4f |", layer[k] );
 
-			/* Calcular el numero de caracteres normalizado con el maximo a 60 */
 			int ticks = (int)( 60 * layer[k] / maximos[num_storms-1] );
-
-			/* Escribir todos los caracteres menos el ultimo */
 			for (i=0; i<ticks-1; i++ ) printf("o");
-
-			/* Para maximos locales escribir ultimo caracter especial */
 			if ( k>0 && k<layer_size-1 && layer[k] > layer[k-1] && layer[k] > layer[k+1] )
 				printf("x");
 			else
 				printf("o");
 
-			/* Si el punto es uno de los maximos especiales, annadir marca */
 			for (i=0; i<num_storms; i++) 
 				if ( posiciones[i] == k ) printf(" M%d", i );
 
-			/* Fin de linea */
 			printf("\n");
 		}
 	}
 }
 
-/*
- * Funcion: Lectura de fichero con datos de tormenta de particulas
- */
 Storm read_storm_file( char *fname ) {
 	FILE *fstorm = cp_abrir_fichero( fname );
 	if ( fstorm == NULL ) {
@@ -132,7 +89,6 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-	/* 1.1. Leer argumentos */
 	if (argc<3) {
 		if (rank == ROOT_RANK)
 			fprintf(stderr,"Usage: %s <size> <storm_1_file> [ <storm_i_file> ] ... \n", argv[0] );
@@ -143,11 +99,9 @@ int main(int argc, char *argv[]) {
 	int num_storms = argc-2;
 	Storm storms[ num_storms ];
 
-	/* 1.2. Leer datos de storms */
 	for( i=2; i<argc; i++ ) 
 		storms[i-2] = read_storm_file( argv[i] );
 
-	/* 1.3. Inicializar maximos a cero */
 	float maximos[ num_storms ];
 	int posiciones[ num_storms ];
 	for (i=0; i<num_storms; i++) {
@@ -155,18 +109,12 @@ int main(int argc, char *argv[]) {
 		posiciones[i] = 0;
 	}
 
-	/* 2. Inicia medida de tiempo */
 	MPI_Barrier(MPI_COMM_WORLD);
 	double ttotal = cp_Wtime();
 
-
-
-
-
 	/* ------------------------------------------------------------------- */
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
-	if (rank == ROOT_RANK)
-	{
+
 	/* 3. Reservar memoria para las capas e inicializar a cero */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
 	float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
@@ -178,75 +126,100 @@ int main(int argc, char *argv[]) {
 	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
 	
 	/* 4. Fase de bombardeos */
+	/* Calculamos los rangos de cada proceso */
+	int rank_size = layer_size / size;
+	if (rank < layer_size % size)
+		rank_size += 1;
+	int rank_displacement = rank * (layer_size / size);
+	if(rank > layer_size % size)
+		rank_displacement += layer_size % size;
+	else
+		rank_displacement += rank;
+
+
 	for( i=0; i<num_storms; i++) {
 
 		/* 4.1. Suma energia de impactos */
-		/* Para cada particula */
-		for( j=0; j<storms[i].size; j++ ) {
-			/* Energia de impacto (en milesimas) */
-			float energia = (float)storms[i].posval[j*2+1] / 1000;
-			/* Posicion de impacto */
-			int posicion = storms[i].posval[j*2];
+		/* Calculamos la amplitud de precipitaciones que le va a tocar a cada proceso */
+		int amplitud = storms[i].size / size;
+		int inicio = rank*amplitud;
+		int fin = inicio + amplitud;
 
-			/* Para cada posicion de la capa */
-			for( k=0; k<layer_size; k++ ) {
+
+		MPI_Barrier(MPI_COMM_WORLD);
+		for( j=0 ; j< storms[i].size ; j++ ) {
+			int posicion = storms[i].posval[j*2];
+			float energia = (float)storms[i].posval[j*2+1] / 1000;
+
+			for( k=rank_displacement; k<(rank_displacement+rank_size); k++ ) {
 				/* Actualizar posicion */
-				actualiza( layer, k, posicion, energia );
+				int distancia = posicion - k;
+				if ( distancia < 0 ) distancia = - distancia;
+				distancia = distancia + 1;
+				float atenuacion = sqrtf( (float)distancia );
+				float energia_k = energia / atenuacion;
+				if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
+					layer[k] = layer[k] + energia_k;
 			}
 		}
 
-		/* 4.2. Relajacion entre tormentas de particulas */
-		/* 4.2.1. Copiar valores a capa auxiliar */
-		for( k=0; k<layer_size; k++ ) 
-			layer_copy[k] = layer[k];
+		/* Guardamos los resultados en layer_copy de ROOT */
+		MPI_Reduce( layer, layer_copy, layer_size, MPI_FLOAT, MPI_SUM, ROOT_RANK, MPI_COMM_WORLD);
 
-		/* 4.2.2. Actualizar capa, menos los extremos, usando valores del array auxiliar */
-		for( k=1; k<layer_size-1; k++ )
-			layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
-
-		/* 4.3. Localizar maximo */
-		for( k=1; k<layer_size-1; k++ ) {
-			/* Comprobar solo maximos locales */
-			if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
-				if ( layer[k] > maximos[i] ) {
-					maximos[i] = layer[k];
-					posiciones[i] = k;
-				}
+		/* 
+		 * Tenemos los datos en layer_copy, se lo pasamos a la local = layer 
+		 * Como esto lo hacen todos los procesos, todos tienen los mismos valores.
+		 */
+		if (rank == ROOT_RANK){
+			for( k=0; k<layer_size; k++ ){ 
+				layer[k] = layer_copy[k];
 			}
-		} //end for each particle in storm
-	} //end foreach storm
+			for( k=1; k<layer_size-1; k++ )
+				layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
-	}
+			for( k=1; k<layer_size-1; k++ ) {
+				/* Guardamos los resultados en ROOT */
+				if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
+					if ( layer[k] > maximos[i] ) {
+						maximos[i] = layer[k];
+						posiciones[i] = k;
+					}
+				}
+			
+			}
+		} 
 
+		/* Compartimos los datos de layer con el resto de procesos para
+		 * la siguiente oleada.
+		 */
+		MPI_Bcast( layer, size, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
+		MPI_Barrier(MPI_COMM_WORLD);
+	} 
 
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
-	/* 5. Final de medida de tiempo */
+
 	MPI_Barrier(MPI_COMM_WORLD);
 	ttotal = cp_Wtime() - ttotal;
 
-	/* 6. DEBUG: Dibujar resultado (Solo para capas con hasta 35 puntos) */
 	#ifdef DEBUG
 	debug_print( layer_size, layer, posiciones, maximos, num_storms );
 	#endif
 
-	if (rank == ROOT_RANK)
-	{
-		/* 7. Salida de resultados para tablon */
+	if (rank == ROOT_RANK) {
 		printf("\n");
-		/* 7.1. Tiempo total de la computacion */
+	
 		printf("Time: %lf\n", ttotal );
-		/* 7.2. Escribir los maximos */
+
 		printf("Result:");
 		for (i=0; i<num_storms; i++)
 			printf(" %d %f", posiciones[i], maximos[i] );
 		printf("\n");
 	}
-	/* 8. Liberar recursos */	
+
 	for( i=0; i<argc-2; i++ )
 		free( storms[i].posval );
 
-	/* 9. Final correcto */
 	MPI_Finalize();
 	return 0;
 }

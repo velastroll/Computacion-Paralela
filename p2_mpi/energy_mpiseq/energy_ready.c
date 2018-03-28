@@ -23,34 +23,6 @@ typedef struct {
 	int *posval;
 } Storm;
 
-
-
-
-/* ------- ESTA FUNCION PUEDE SER MODIFICADA ------- */
-/*  Funcion para actualizar una posicion de la capa  */
-void actualiza( float *layer, int k, int pos, float energia ) {
-	/* 1. Calcular valor absoluto de la distancia entre el
-		punto de impacto y el punto k de la capa */
-	int distancia = pos - k;
-	if ( distancia < 0 ) distancia = - distancia;
-
-	/* 2. El punto de impacto tiene distancia 1 */
-	distancia = distancia + 1;
-
-	/* 3. Raiz cuadrada de la distancia */
-	float atenuacion = sqrtf( (float)distancia );
-
-	/* 4. Calcular energia atenuada */
-	float energia_k = energia / atenuacion;
-
-	/* 5. No sumar si el valor absoluto es menor que umbral */
-	if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
-		layer[k] = layer[k] + energia_k;
-} /* -------------------------------------------------- */
-
-
-
-
 /* FUNCIONES AUXILIARES: No se utilizan dentro de la medida de tiempo, dejar como estan */
 /* Funcion de DEBUG: Imprimir el estado de la capa */
 void debug_print(int layer_size, float *layer, int *posiciones, float *maximos, int num_storms ) {
@@ -132,7 +104,6 @@ int main(int argc, char *argv[]) {
 	MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 	MPI_Comm_size(MPI_COMM_WORLD, &size);
 
-	/* 1.1. Leer argumentos */
 	if (argc<3) {
 		if (rank == ROOT_RANK)
 			fprintf(stderr,"Usage: %s <size> <storm_1_file> [ <storm_i_file> ] ... \n", argv[0] );
@@ -143,11 +114,9 @@ int main(int argc, char *argv[]) {
 	int num_storms = argc-2;
 	Storm storms[ num_storms ];
 
-	/* 1.2. Leer datos de storms */
 	for( i=2; i<argc; i++ ) 
 		storms[i-2] = read_storm_file( argv[i] );
 
-	/* 1.3. Inicializar maximos a cero */
 	float maximos[ num_storms ];
 	int posiciones[ num_storms ];
 	for (i=0; i<num_storms; i++) {
@@ -159,14 +128,9 @@ int main(int argc, char *argv[]) {
 	MPI_Barrier(MPI_COMM_WORLD);
 	double ttotal = cp_Wtime();
 
-
-
-
-
 	/* ------------------------------------------------------------------- */
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
-	if (rank == ROOT_RANK)
-	{
+
 	/* 3. Reservar memoria para las capas e inicializar a cero */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
 	float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
@@ -181,26 +145,41 @@ int main(int argc, char *argv[]) {
 	for( i=0; i<num_storms; i++) {
 
 		/* 4.1. Suma energia de impactos */
-		/* Para cada particula */
-		for( j=0; j<storms[i].size; j++ ) {
-			/* Energia de impacto (en milesimas) */
-			float energia = (float)storms[i].posval[j*2+1] / 1000;
-			/* Posicion de impacto */
-			int posicion = storms[i].posval[j*2];
+		/* Calculamos la amplitud de precipitaciones que le va a tocar a cada proceso */
+		int amplitud = storms[i].size / size;
+		int inicio = rank*amplitud;
+		int fin = inicio + amplitud;
 
-			/* Para cada posicion de la capa */
+		MPI_Barrier(MPI_COMM_WORLD);
+
+		for( j=0; j<storms[i].size; j++ ) {
+		//for( j=inicio ; j<fin ; j++ ) {
+			int posicion = storms[i].posval[j*2];
+			float energia = (float)storms[i].posval[j*2+1] / 1000;
+
 			for( k=0; k<layer_size; k++ ) {
 				/* Actualizar posicion */
-				actualiza( layer, k, posicion, energia );
+				int distancia = posicion - k;
+				if ( distancia < 0 ) distancia = - distancia;
+				distancia = distancia + 1;
+				float atenuacion = sqrtf( (float)distancia );
+				float energia_k = energia / atenuacion;
+				if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
+					layer[k] = layer[k] + energia_k;
 			}
 		}
 
-		/* 4.2. Relajacion entre tormentas de particulas */
-		/* 4.2.1. Copiar valores a capa auxiliar */
-		for( k=0; k<layer_size; k++ ) 
-			layer_copy[k] = layer[k];
+		/* Una vez calculadas las precipitaciones en cada proceso, se juntan en layer_copy*/
+		// MPI_Allreduce( layer, layer_copy, layer_size, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
-		/* 4.2.2. Actualizar capa, menos los extremos, usando valores del array auxiliar */
+		/* 
+		 * Tenemos los datos en layer_copy, se lo pasamos a la local = layer 
+		 * Como esto lo hacen todos los procesos, todos tienen los mismos valores.
+		 */
+		for( k=0; k<layer_size; k++ ){ 
+			layer_copy[k] = layer[k];
+			// layer[k] = layer_copy[k];
+		}
 		for( k=1; k<layer_size-1; k++ )
 			layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
@@ -213,11 +192,12 @@ int main(int argc, char *argv[]) {
 					posiciones[i] = k;
 				}
 			}
+		
+		
 		} //end for each particle in storm
+
+		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
-
-	}
-
 
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
