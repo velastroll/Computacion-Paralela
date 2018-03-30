@@ -17,35 +17,47 @@
 #define UMBRAL	0.001f
 #define ROOT_RANK 0
 
+/* Estructura para almacenar los datos de una tormenta de particulas */
 typedef struct {
 	int size;
 	int *posval;
 } Storm;
 
+/* FUNCIONES AUXILIARES: No se utilizan dentro de la medida de tiempo, dejar como estan */
+/* Funcion de DEBUG: Imprimir el estado de la capa */
 void debug_print(int layer_size, float *layer, int *posiciones, float *maximos, int num_storms ) {
 	int i,k;
 	if ( layer_size <= 35 ) {
-
+		/* Recorrer capa */
 		for( k=0; k<layer_size; k++ ) {
+			/* Escribir valor del punto */
 			printf("%10.4f |", layer[k] );
 
+			/* Calcular el numero de caracteres normalizado con el maximo a 60 */
 			int ticks = (int)( 60 * layer[k] / maximos[num_storms-1] );
 
+			/* Escribir todos los caracteres menos el ultimo */
 			for (i=0; i<ticks-1; i++ ) printf("o");
 
+			/* Para maximos locales escribir ultimo caracter especial */
 			if ( k>0 && k<layer_size-1 && layer[k] > layer[k-1] && layer[k] > layer[k+1] )
 				printf("x");
 			else
 				printf("o");
 
+			/* Si el punto es uno de los maximos especiales, annadir marca */
 			for (i=0; i<num_storms; i++) 
 				if ( posiciones[i] == k ) printf(" M%d", i );
 
+			/* Fin de linea */
 			printf("\n");
 		}
 	}
 }
 
+/*
+ * Funcion: Lectura de fichero con datos de tormenta de particulas
+ */
 Storm read_storm_file( char *fname ) {
 	FILE *fstorm = cp_abrir_fichero( fname );
 	if ( fstorm == NULL ) {
@@ -112,38 +124,52 @@ int main(int argc, char *argv[]) {
 		posiciones[i] = 0;
 	}
 
+	/* 2. Inicia medida de tiempo */
 	MPI_Barrier(MPI_COMM_WORLD);
 	double ttotal = cp_Wtime();
 
 	/* ------------------------------------------------------------------- */
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
 
+	/* 3. Reservar memoria para las capas e inicializar a cero */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
 	float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
+	float *historico = (float *)malloc( sizeof(float) * layer_size );
+
 	if ( layer == NULL || layer_copy == NULL ) {
 		fprintf(stderr,"Error: Allocating the layer memory\n");
 		exit( EXIT_FAILURE );
 	}
 	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
+	for( k=0; k<layer_size; k++ ) historico[k] = 0.0f;
 	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
+
+
+
+	/* Calculamos las divisiones para cada proceso */
+
+	int dominio = layer_size / size;
+	if (rank < layer_size%rank){
+		dominio++;
+	}
+	int inicio = rank * layer_size / size;
+	if (rank < layer_size%size){
+		inicio += rank;
+	} else {
+		inicio += layer_size%size;
+	}
 	
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {
-
-		/* 4.1. Suma energia de impactos */
-		/* Calculamos la amplitud de precipitaciones que le va a tocar a cada proceso */
-		int amplitud = storms[i].size / size;
-		int inicio = rank*amplitud;
-		int fin = inicio+amplitud;
-
 		MPI_Barrier(MPI_COMM_WORLD);
 
-		for( j=inicio ; j<fin ; j++ ) {
+		for( j=0; j<storms[i].size; j++ ) {
 			int posicion = storms[i].posval[j*2];
 			float energia = (float)storms[i].posval[j*2+1] / 1000;
 
-			for( k=0; k<layer_size; k++ ) {
-				/* Actualizar posicion */
+
+			/* Cada proceso ejecutará desde su inicio hasta su (inicio+dominio) */
+			for( k=inicio; k<(inicio+dominio); k++ ) {
 				int distancia = posicion - k;
 				if ( distancia < 0 ) distancia = - distancia;
 				distancia = distancia + 1;
@@ -154,54 +180,68 @@ int main(int argc, char *argv[]) {
 			}
 		}
 
-		/* Una vez calculadas las precipitaciones en cada proceso, se juntan en layer_copy*/
+		/* Se juntan las capas. Como estaban restablecidas y cada una no toca las posiciones
+		*  con las que operan los otros procesos, se pueden sumar.
+		* */
+		MPI_Barrier(MPI_COMM_WORLD);
 		MPI_Allreduce( layer, layer_copy, layer_size, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
 
-		/* 
-		 * Tenemos los datos en layer_copy, se lo pasamos a la local = layer 
-		 * Como esto lo hacen todos los procesos, todos tienen los mismos valores.
-		 */
-		for( k=0; k<layer_size; k++ ) 
-			layer[k] = layer_copy[k];
+		/* Sumamos el historico de las otras tormentas.*/
+		for( k=0; k<layer_size; k++ ){ 
+			layer[k] = layer_copy[k] + historico[k];
+		}
 
+		/* Guardamos en el historico el final de la tormenta tras la atenuación */
 		for( k=1; k<layer_size-1; k++ )
-			layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
+			historico[k] = ( layer[k-1] + layer[k] + layer[k+1] ) / 3;
 
+		/* 4.3. Localizar maximo */
 		for( k=1; k<layer_size-1; k++ ) {
-			if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
-				if ( layer[k] > maximos[i] ) {
-					maximos[i] = layer[k];
+			/* Comprobar solo maximos locales */
+			if ( historico[k] > historico[k-1] && historico[k] > historico[k+1] ) {
+				if ( historico[k] > maximos[i] ) {
+					maximos[i] = historico[k];
 					posiciones[i] = k;
 				}
 			}
-		
-		
 		} //end for each particle in storm
 
+		/* Se reinician las capas para la siguiente tormenta, excepto la de histórico */
+		for( k=0 ; k<layer_size ; k++){
+			layer[k]=0.0f;
+			layer_copy[k]=0.0f;
+		}
 		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
 
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
+	/* 5. Final de medida de tiempo */
 	MPI_Barrier(MPI_COMM_WORLD);
 	ttotal = cp_Wtime() - ttotal;
 
+	/* 6. DEBUG: Dibujar resultado (Solo para capas con hasta 35 puntos) */
 	#ifdef DEBUG
 	debug_print( layer_size, layer, posiciones, maximos, num_storms );
 	#endif
 
 	if (rank == ROOT_RANK)
 	{
+		/* 7. Salida de resultados para tablon */
 		printf("\n");
+		/* 7.1. Tiempo total de la computacion */
 		printf("Time: %lf\n", ttotal );
+		/* 7.2. Escribir los maximos */
 		printf("Result:");
 		for (i=0; i<num_storms; i++)
 			printf(" %d %f", posiciones[i], maximos[i] );
 		printf("\n");
 	}
+	/* 8. Liberar recursos */	
 	for( i=0; i<argc-2; i++ )
 		free( storms[i].posval );
 
+	/* 9. Final correcto */
 	MPI_Finalize();
 	return 0;
 }

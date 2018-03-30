@@ -7,7 +7,7 @@ CC=mpicc
 energy: energy_mod.c 
 	$(CC) $(CFLAGS) $< -o $@ $(LIBS)
 
-original: energy_original.c 
+original: energy_ready.c 
 	$(CC) $(CFLAGS) $< -o $@ $(LIBS)
 
 debug: energy_mod.c
@@ -29,7 +29,7 @@ medium:
 	$ mpiexec -n 5 ./energy 100000 ./test/testMedium_100000
 
 mix: 
-	$ mpiexec -n 3 ./original 20 ./test/testMPI_20_4p_3.txt ./test/testMPI_20_4p_2.txt 
+	$ mpiexec -n 2 ./energy 100000 ./test/testMedium_100000 ./test/testSmall_20000 ./test/testMPI_20_4p_3.txt ./test/testMPI_20_4p_2.txt ./test/testMPI_20_4p_1.txt 
 	
 clean:
 	rm -f energy debug original
