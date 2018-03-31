@@ -179,7 +179,7 @@ int main(int argc, char *argv[]) {
 	}
 
 	float *layer_local = (float *)malloc( sizeof(float) * sendcount[rank] );
-	for (k=0; k<layer_size; k++) layer_local[k]=0.0f;
+	for (k=0; k<sendcount[rank]; k++) layer_local[k]=0.0f;
 
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {
@@ -188,7 +188,6 @@ int main(int argc, char *argv[]) {
 		/* hacemos el scatter */
 		MPI_Scatterv( layer, sendcount, desplazamiento, MPI_FLOAT, layer_local, sendcount[rank], MPI_FLOAT, 0, MPI_COMM_WORLD );
 		/* a partir de aquí, cada proceso tiene un layer_local de un tamaño determinado con el que operara */
-
 		for( j=0; j<storms[i].size; j++ ) {
 			int posicion = storms[i].posval[j*2];
 			float energia = (float)storms[i].posval[j*2+1] / 1000;
@@ -196,7 +195,7 @@ int main(int argc, char *argv[]) {
 			/* Cada proceso opera con su layer_local */
 			for( k=0; k<sendcount[rank]; k++ ) {
 				/* Actualizar posicion */
-				int distancia = posicion - k;
+				int distancia = posicion - (k+desplazamiento[rank]);
 				if ( distancia < 0 ) distancia = - distancia;
 				distancia = distancia + 1;
 				float atenuacion = sqrtf( (float)distancia );
@@ -207,8 +206,9 @@ int main(int argc, char *argv[]) {
 		}
 
 		/* Recopilamos los datos con un Gatterv */
-		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, 0, MPI_COMM_WORLD );
 
+		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, 0, MPI_COMM_WORLD );
+		
 		/* El proceso 0 tiene recopilado todo en layer */
 
 		if (rank==ROOT_RANK){ 

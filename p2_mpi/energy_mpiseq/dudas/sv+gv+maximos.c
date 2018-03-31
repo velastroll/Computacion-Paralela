@@ -217,18 +217,30 @@ int main(int argc, char *argv[]) {
 			}
 			for( k=1; k<layer_size-1; k++ )
 				layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
+		}
 
-			/* 4.3. Localizar maximo */
-			for( k=1; k<layer_size-1; k++ ) {
-				if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
-					if ( layer[k] > maximos[i] ) {
-						maximos[i] = layer[k];
-						posiciones[i] = k;
-					}
+		MPI_Scatterv( layer, sendcount, desplazamiento, MPI_FLOAT, layer_local, sendcount[rank], MPI_FLOAT, 0, MPI_COMM_WORLD );
+		
+		/* 4.3. Localizar maximo */
+		for( k=1; k<sendcount[rank]-1; k++ ) {
+			if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
+				if ( layer[k] > maximos[i] ) {
+					maximos[i] = layer[k];
+					posiciones[i] = k+desplazamiento[rank];
 				}
 			}
-		} //end for each particle in storm
+		}
+		float nuevomaximo;
+		MPI_Reduce( &maximos[i], &nuevomaximo, 1, MPI_FLOAT, MPI_MAX, ROOT_RANK, MPI_COMM_WORLD );
 
+		if(rank == ROOT_RANK){
+			for( k=0; k<layer_size ; k++){
+				if (layer[k]==nuevomaximo)
+					posiciones[i] = k;
+			}
+		}
+		//end for each particle in storm
+		
 		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
 
