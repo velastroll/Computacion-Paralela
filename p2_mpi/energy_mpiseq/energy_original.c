@@ -116,6 +116,18 @@ Storm read_storm_file( char *fname ) {
 	return storm;
 }
 
+void printlayer(float* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%f, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
 /*
  * PROGRAMA PRINCIPAL
  */
@@ -190,10 +202,20 @@ int main(int argc, char *argv[]) {
 		for( k=0; k<layer_size; k++ ) 
 			layer_copy[k] = layer[k];
 
+
+
+		printf("LC-PreRelajacion:\n"); fflush(stdout);
+		printlayer(layer_copy, layer_size);
+		
 		/* 4.2.2. Actualizar capa, menos los extremos, usando valores del array auxiliar */
 		for( k=1; k<layer_size-1; k++ )
 			layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
+		printf("LC-POSTRelajacion:\n"); fflush(stdout);
+		printlayer(layer_copy, layer_size);
+		
+		printf("Layer-POSTRelajacion:\n"); fflush(stdout);
+		printlayer(layer, layer_size);
 		/* 4.3. Localizar maximo */
 		for( k=1; k<layer_size-1; k++ ) {
 			/* Comprobar solo maximos locales */
