@@ -93,6 +93,31 @@ Storm read_storm_file( char *fname ) {
 	return storm;
 }
 
+void printvec(int* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%i, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
+void printlayer(float* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%f, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
+
 /*
  * PROGRAMA PRINCIPAL
  */
@@ -132,6 +157,9 @@ int main(int argc, char *argv[]) {
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
 
 	/* 3. Reservar memoria para las capas e inicializar a cero */
+	
+	/* LAYER y LAYER_COPY solo lo va a usar root, asi que se podria hacer aqui un
+	 * control de la memoria reservada */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
 	float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
 	if ( layer == NULL || layer_copy == NULL ) {
@@ -140,20 +168,9 @@ int main(int argc, char *argv[]) {
 	}
 	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
 	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
-	
 
-	/* Calculamos las divisiones para cada proceso */
+	printf("l_size:%d\tsize:%d\n", layer_size, size); fflush(stdout);
 
-	int dominio = layer_size / size;
-	if (rank < layer_size%rank){
-		dominio++;
-	}
-	int inicio = rank * layer_size / size;
-	if (rank < layer_size%size){
-		inicio += rank;
-	} else {
-		inicio += layer_size%size;
-	}
 
 	/* Planteamos un scatterv que divida la capa en porciones para cada proceso.
 	 *	*sendbuf = layer del root, es el que se envía
@@ -174,12 +191,27 @@ int main(int argc, char *argv[]) {
 
 	for (proceso = 0 ; proceso < size ; proceso++){
 		sendcount[proceso] = layer_size/size;
-		if (rank < layer_size%rank) sendcount[proceso] += 1;
+		if (proceso < layer_size%size) sendcount[proceso] += 1;
 		if (proceso > 0) desplazamiento[proceso] = desplazamiento[proceso-1] + sendcount[proceso-1];
 	}
 
 	float *layer_local = (float *)malloc( sizeof(float) * sendcount[rank] );
 	for (k=0; k<sendcount[rank]; k++) layer_local[k]=0.0f;
+
+	int inicio = desplazamiento[rank];
+	int dominio = sendcount[rank];
+
+	printf("P%d:\tinicio:%d\tdominio:%d\n", rank, inicio, dominio); fflush(stdout);
+
+	if (ROOT_RANK==rank) {
+		printf("dominios: "); fflush(stdout);
+		printvec( sendcount, size );
+
+
+		printf("inicios: "); fflush(stdout);
+		printvec( desplazamiento, size );
+	}
+
 
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {
@@ -188,6 +220,7 @@ int main(int argc, char *argv[]) {
 		/* hacemos el scatter */
 		MPI_Scatterv( layer, sendcount, desplazamiento, MPI_FLOAT, layer_local, sendcount[rank], MPI_FLOAT, 0, MPI_COMM_WORLD );
 		/* a partir de aquí, cada proceso tiene un layer_local de un tamaño determinado con el que operara */
+
 		for( j=0; j<storms[i].size; j++ ) {
 			int posicion = storms[i].posval[j*2];
 			float energia = (float)storms[i].posval[j*2+1] / 1000;
