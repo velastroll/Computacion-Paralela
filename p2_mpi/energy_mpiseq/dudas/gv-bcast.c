@@ -6,6 +6,8 @@
  *
  * (c) 2018 Arturo Gonzalez Escribano
  * Version: 2.0 (Atenuacion no lineal)
+ * 
+ * Alvaro Velasco
  */
 #include<stdio.h>
 #include<stdlib.h>
@@ -93,6 +95,31 @@ Storm read_storm_file( char *fname ) {
 	return storm;
 }
 
+void printvec(int* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%i, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
+void printlayer(float* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%f, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
+
 /*
  * PROGRAMA PRINCIPAL
  */
@@ -132,21 +159,39 @@ int main(int argc, char *argv[]) {
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
 
 	/* 3. Reservar memoria para las capas e inicializar a cero */
+	
+	/* LAYER y LAYER_COPY solo lo va a usar root, asi que se podria hacer aqui un
+	 * control de la memoria reservada */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
-	float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
-	float *historico = (float *)malloc( sizeof(float) * layer_size );
-
-	if ( layer == NULL || layer_copy == NULL ) {
+	float *layer_copy;
+	if ( layer == NULL) {
 		fprintf(stderr,"Error: Allocating the layer memory\n");
 		exit( EXIT_FAILURE );
 	}
+
 	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
-	for( k=0; k<layer_size; k++ ) historico[k] = 0.0f;
-	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
+
+	if (ROOT_RANK==rank){
+		layer_copy = (float *)malloc( sizeof(float) * layer_size );
+		if ( layer_copy == NULL) {
+			fprintf(stderr,"Error: Allocating the layer memory\n");
+			exit( EXIT_FAILURE );
+		}
+		for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
+	}
 
 
-
-	/* Calculamos las divisiones para cada proceso */
+	/* Planteamos un scatterv que divida la capa en porciones para cada proceso.
+	 *	*sendbuf = layer del root, es el que se envía
+	 *  *sendcount =  array de número de elementos a cada proceso.
+	 *  *desplazamiento
+	 *  MPI_Datatype
+	 * 	*rcvbuf = layer_local -> Es del tamaño de sendcount[rank]
+	 *  (int) recvcnt -> NUmero de elementos que recibe el buffer (diferente en cada proceso?->sendcount[rank])
+	 *  MPI_Datatype
+	 *  root -> ROOT_RANK
+	 *  MPI_COmm
+	 */
 	int proceso, scount=0;
 	int *sendcount = (int *)malloc( sizeof(int) * size );
 	for (k=0; k<size; k++) sendcount[k]=0;
@@ -158,6 +203,11 @@ int main(int argc, char *argv[]) {
 		if (proceso < layer_size%size) sendcount[proceso] += 1;
 		if (proceso > 0) desplazamiento[proceso] = desplazamiento[proceso-1] + sendcount[proceso-1];
 	}
+
+	/* Cada proceso trabaja con una particion de la capa */
+	float *layer_local = (float *)malloc( sizeof(float) * sendcount[rank] );
+	for (k=0; k<sendcount[rank]; k++) layer_local[k]=0.0f;
+
 	int inicio = desplazamiento[rank];
 	int dominio = sendcount[rank];
 
@@ -165,57 +215,61 @@ int main(int argc, char *argv[]) {
 	for( i=0; i<num_storms; i++) {
 		MPI_Barrier(MPI_COMM_WORLD);
 
+		/* Rellenamos el layer local con la parte que le toca a cada proceso */
+		for (j=0 ; j<dominio ; j++){
+			layer_local[j] = layer[inicio+j];
+		}
+
 		for( j=0; j<storms[i].size; j++ ) {
 			int posicion = storms[i].posval[j*2];
 			float energia = (float)storms[i].posval[j*2+1] / 1000;
 
-
-			/* Cada proceso ejecutará desde su inicio hasta su (inicio+dominio) */
-			for( k=inicio; k<(inicio+dominio); k++ ) {
-				int distancia = posicion - k;
+			/* Cada proceso opera con su layer_local */
+			for( k=0; k<sendcount[rank]; k++ ) {
+				/* Actualizar posicion */
+				int distancia = posicion - (k+desplazamiento[rank]);
 				if ( distancia < 0 ) distancia = - distancia;
 				distancia = distancia + 1;
 				float atenuacion = sqrtf( (float)distancia );
 				float energia_k = energia / atenuacion;
 				if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
-					layer[k] = layer[k] + energia_k;
+					layer_local[k] = layer_local[k] + energia_k;
 			}
 		}
 
-		/* Se juntan las capas. Como estaban restablecidas y cada una no toca las posiciones
-		*  con las que operan los otros procesos, se pueden sumar.
-		* */
-		MPI_Barrier(MPI_COMM_WORLD);
-		MPI_Allreduce( layer, layer_copy, layer_size, MPI_FLOAT, MPI_SUM, MPI_COMM_WORLD);
+		/* Recopilamos los datos con un Gatterv */
 
-		/* Sumamos el historico de las otras tormentas.*/
-		for( k=0; k<layer_size; k++ ){ 
-			layer[k] = layer_copy[k] + historico[k];
-		}
+		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
+		
+		/* El proceso 0 tiene recopilado todo en layer */
 
-		/* Guardamos en el historico el final de la tormenta tras la atenuación */
-		for( k=1; k<layer_size-1; k++ )
-			historico[k] = ( layer[k-1] + layer[k] + layer[k+1] ) / 3;
+		if (rank==ROOT_RANK){ 
+			for( k=0; k<layer_size; k++ ){ 
+				layer_copy[k] = layer[k];
+			}
+			for( k=1; k<layer_size-1; k++ )
+				layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
-		/* 4.3. Localizar maximo */
-		for( k=1; k<layer_size-1; k++ ) {
-			/* Comprobar solo maximos locales */
-			if ( historico[k] > historico[k-1] && historico[k] > historico[k+1] ) {
-				if ( historico[k] > maximos[i] ) {
-					maximos[i] = historico[k];
-					posiciones[i] = k;
+			/* 4.3. Localizar maximo */
+			for( k=1; k<layer_size-1; k++ ) {
+				if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
+					if ( layer[k] > maximos[i] ) {
+						maximos[i] = layer[k];
+						posiciones[i] = k;
+					}
 				}
 			}
 		} //end for each particle in storm
 
-		/* Se reinician las capas para la siguiente tormenta, excepto la de histórico */
-		for( k=0 ; k<layer_size ; k++){
-			layer[k]=0.0f;
-			layer_copy[k]=0.0f;
-		}
+		MPI_Bcast( layer, layer_size, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
 		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
 
+	free(layer);
+	free(layer_local);
+	free(desplazamiento);
+	free(sendcount);
+	
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
 	/* 5. Final de medida de tiempo */

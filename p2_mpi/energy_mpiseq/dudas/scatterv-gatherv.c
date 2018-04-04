@@ -6,6 +6,8 @@
  *
  * (c) 2018 Arturo Gonzalez Escribano
  * Version: 2.0 (Atenuacion no lineal)
+ * 
+ * Alvaro Velasco
  */
 #include<stdio.h>
 #include<stdlib.h>
@@ -169,8 +171,6 @@ int main(int argc, char *argv[]) {
 	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
 	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
 
-	printf("l_size:%d\tsize:%d\n", layer_size, size); fflush(stdout);
-
 
 	/* Planteamos un scatterv que divida la capa en porciones para cada proceso.
 	 *	*sendbuf = layer del root, es el que se envía
@@ -200,18 +200,6 @@ int main(int argc, char *argv[]) {
 
 	int inicio = desplazamiento[rank];
 	int dominio = sendcount[rank];
-
-	printf("P%d:\tinicio:%d\tdominio:%d\n", rank, inicio, dominio); fflush(stdout);
-
-	if (ROOT_RANK==rank) {
-		printf("dominios: "); fflush(stdout);
-		printvec( sendcount, size );
-
-
-		printf("inicios: "); fflush(stdout);
-		printvec( desplazamiento, size );
-	}
-
 
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {

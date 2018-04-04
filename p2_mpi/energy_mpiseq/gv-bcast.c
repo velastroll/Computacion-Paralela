@@ -6,6 +6,8 @@
  *
  * (c) 2018 Arturo Gonzalez Escribano
  * Version: 2.0 (Atenuacion no lineal)
+ * 
+ * Alvaro Velasco
  */
 #include<stdio.h>
 #include<stdlib.h>
@@ -93,6 +95,31 @@ Storm read_storm_file( char *fname ) {
 	return storm;
 }
 
+void printvec(int* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%i, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
+void printlayer(float* layer, int layer_size){
+	int p;
+	printf("[");
+	for (p=0; p<layer_size; p++)
+        {
+            printf("%f, ", layer[p]);
+        }
+        printf("\b\b] \n");
+        fflush(stdout);
+}
+
+
+
 /*
  * PROGRAMA PRINCIPAL
  */
@@ -132,32 +159,27 @@ int main(int argc, char *argv[]) {
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
 
 	/* 3. Reservar memoria para las capas e inicializar a cero */
+	
+	/* LAYER y LAYER_COPY solo lo va a usar root, asi que se podria hacer aqui un
+	 * control de la memoria reservada */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
-	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
-
+	float *layer_copy;
 	if ( layer == NULL) {
 		fprintf(stderr,"Error: Allocating the layer memory\n");
 		exit( EXIT_FAILURE );
 	}
-	
-	float *layer_copy;
-	if(ROOT_RANK == rank){
-		 layer_copy = (float *)malloc( sizeof(float) * layer_size );
-		 for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
+
+	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
+
+	if (ROOT_RANK==rank){
+		layer_copy = (float *)malloc( sizeof(float) * layer_size );
+		if ( layer_copy == NULL) {
+			fprintf(stderr,"Error: Allocating the layer memory\n");
+			exit( EXIT_FAILURE );
+		}
+		for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
 	}
 
-	/* Calculamos las divisiones para cada proceso */
-
-	int dominio = layer_size / size;
-	if (rank < layer_size%rank){
-		dominio++;
-	}
-	int inicio = rank * layer_size / size;
-	if (rank < layer_size%size){
-		inicio += rank;
-	} else {
-		inicio += layer_size%size;
-	}
 
 	/* Planteamos un scatterv que divida la capa en porciones para cada proceso.
 	 *	*sendbuf = layer del root, es el que se envía
@@ -178,20 +200,26 @@ int main(int argc, char *argv[]) {
 
 	for (proceso = 0 ; proceso < size ; proceso++){
 		sendcount[proceso] = layer_size/size;
-		if (rank < layer_size%rank) sendcount[proceso] += 1;
+		if (proceso < layer_size%size) sendcount[proceso] += 1;
 		if (proceso > 0) desplazamiento[proceso] = desplazamiento[proceso-1] + sendcount[proceso-1];
 	}
 
+	/* Cada proceso trabaja con una particion de la capa */
 	float *layer_local = (float *)malloc( sizeof(float) * sendcount[rank] );
 	for (k=0; k<sendcount[rank]; k++) layer_local[k]=0.0f;
+
+	int inicio = desplazamiento[rank];
+	int dominio = sendcount[rank];
 
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {
 		MPI_Barrier(MPI_COMM_WORLD);
 
-		/* hacemos el scatter */
-		MPI_Scatterv( layer, sendcount, desplazamiento, MPI_FLOAT, layer_local, sendcount[rank], MPI_FLOAT, 0, MPI_COMM_WORLD );
-		/* a partir de aquí, cada proceso tiene un layer_local de un tamaño determinado con el que operara */
+		/* Rellenamos el layer local con la parte que le toca a cada proceso */
+		for (j=0 ; j<dominio ; j++){
+			layer_local[j] = layer[inicio+j];
+		}
+
 		for( j=0; j<storms[i].size; j++ ) {
 			int posicion = storms[i].posval[j*2];
 			float energia = (float)storms[i].posval[j*2+1] / 1000;
@@ -211,7 +239,7 @@ int main(int argc, char *argv[]) {
 
 		/* Recopilamos los datos con un Gatterv */
 
-		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, 0, MPI_COMM_WORLD );
+		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
 		
 		/* El proceso 0 tiene recopilado todo en layer */
 
@@ -233,9 +261,15 @@ int main(int argc, char *argv[]) {
 			}
 		} //end for each particle in storm
 
+		MPI_Bcast( layer, layer_size, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
 		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
 
+	free(layer);
+	free(layer_local);
+	free(desplazamiento);
+	free(sendcount);
+	
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
 	/* 5. Final de medida de tiempo */
