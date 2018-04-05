@@ -195,7 +195,7 @@ int main(int argc, char *argv[]) {
 	 *  root -> ROOT_RANK
 	 *  MPI_COmm
 	 */
-	int proceso, scount=0;
+	int proceso;
 	int *sendcount = (int *)malloc( sizeof(int) * size );
 	for (k=0; k<size; k++) sendcount[k]=0;
 	int *desplazamiento = (int *)malloc( sizeof(int) * size );

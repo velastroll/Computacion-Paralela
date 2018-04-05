@@ -163,12 +163,13 @@ int main(int argc, char *argv[]) {
 	/* LAYER y LAYER_COPY solo lo va a usar root, asi que se podria hacer aqui un
 	 * control de la memoria reservada */
 	float *layer = (float *)malloc( sizeof(float) * layer_size );
-	if ( layer == NULL) {
+	float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
+	if ( layer == NULL || layer_copy == NULL ) {
 		fprintf(stderr,"Error: Allocating the layer memory\n");
 		exit( EXIT_FAILURE );
 	}
-
 	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
+	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
 
 
 	/* Planteamos un scatterv que divida la capa en porciones para cada proceso.
@@ -194,7 +195,6 @@ int main(int argc, char *argv[]) {
 		if (proceso > 0) desplazamiento[proceso] = desplazamiento[proceso-1] + sendcount[proceso-1];
 	}
 
-	/* Cada proceso trabaja con una particion de la capa */
 	float *layer_local = (float *)malloc( sizeof(float) * sendcount[rank] );
 	for (k=0; k<sendcount[rank]; k++) layer_local[k]=0.0f;
 
@@ -203,17 +203,13 @@ int main(int argc, char *argv[]) {
 
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {
-		MPI_Barrier(MPI_COMM_WORLD);
-
-		/* Rellenamos el layer local con la parte que le toca a cada proceso */
-		for (j=0 ; j<dominio ; j++){
-			layer_local[j] = layer[inicio+j];
-		}
-
+		/* Dividimos layer del proceso 0 en layer_local para cada proceso */
+		MPI_Scatterv( layer, sendcount, desplazamiento, MPI_FLOAT, layer_local, sendcount[rank], MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
+		/* a partir de aquí, cada proceso tiene un layer_local de un tamaño determinado con el que operara */
+		/* Fase de actualización de layer_local en cada proceso */
 		for( j=0; j<storms[i].size; j++ ) {
 			int posicion = storms[i].posval[j*2];
 			float energia = (float)storms[i].posval[j*2+1] / 1000;
-
 			/* Cada proceso opera con su layer_local */
 			for( k=0; k<sendcount[rank]; k++ ) {
 				/* Actualizar posicion */
@@ -226,64 +222,31 @@ int main(int argc, char *argv[]) {
 					layer_local[k] = layer_local[k] + energia_k;
 			}
 		}
-
 		/* Recopilamos los datos con un Gatterv */
-
 		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
+		/* El proceso 0 tiene recopilado todo en layer */
+		if (rank==ROOT_RANK){ 
+			/* 4.1. Copia a layer_copy */
+			for( k=0; k<layer_size; k++ )
+				layer_copy[k] = layer[k];
+			
+			/* 4.2. Relajacion de particulas */
+			for( k=1; k<layer_size-1; k++ )
+				layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
 
-		/* Compartimos la capa para que cada proceso haga la atenuacion en la suya propia */
-
-		MPI_Bcast( layer, layer_size, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
-		
-
-		for( k=0; k<dominio ; k++ ){
-			if ((k+inicio>0) && (k+inicio < layer_size-1))
-				layer_local[k] = ( layer[k+inicio-1] + layer[k+inicio] + layer[k+inicio+1] ) / 3;
-		}
-
-		int inicio_max = rank == 0 ? 1 : 0;
-		int final_max = rank == size - 1 ? sendcount[rank]-1 : sendcount[rank];
-
-		struct {
-			float maximo;
-			int posicion;
-		} local, global; // Dos variables que contienen el máximo y posicion local, y otra la global por tormenta
-		local.maximo = 0;
-		for( k=inicio_max; k<final_max; k++ ) {
-			// Por definición para ser un máximo global tienes que ser máximo local
-			// if ( layer_local[k] > layer_local[k-1] && layer_local[k] > layer_local[k+1] ) {
-				if ( layer_local[k] > local.maximo ) {
-					local.maximo = layer_local[k];
-					local.posicion = k + desplazamiento[rank];
+			/* 4.3. Localizar maximo */
+			for( k=1; k<layer_size-1; k++ ) {
+				if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
+					if ( layer[k] > maximos[i] ) {
+						maximos[i] = layer[k];
+						posiciones[i] = k;
+					}
 				}
-			// }
-		}
-		// Reducción de los máximos locales sobre el máximo global
-		MPI_Reduce(&local, &global, 1, MPI_FLOAT_INT, MPI_MAXLOC, ROOT_RANK, MPI_COMM_WORLD);
-		// Proceso raíz lo guarda
-		if (rank==ROOT_RANK) {
-			maximos[i] = global.maximo;
-			posiciones[i] = global.posicion;
-		} 
-
-		//end for each particle in storm
-
-		/* Recopilamos los datos finalizando la tormenta con un Gatterv */
-
-		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
-
-		/* Compartimos la capa para que cada proceso haga la siguiente tormenta */
-
-		MPI_Bcast( layer, layer_size, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
-		
-
+			}
+		} //end for each particle in storm
+		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
 
-	free(layer);
-	free(layer_local);
-	free(desplazamiento);
-	free(sendcount);
-	
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
 	/* 5. Final de medida de tiempo */

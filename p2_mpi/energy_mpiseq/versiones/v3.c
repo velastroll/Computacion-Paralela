@@ -159,29 +159,23 @@ int main(int argc, char *argv[]) {
 	/* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
 
 	/* 3. Reservar memoria para las capas e inicializar a cero */
-	
-	/* LAYER y LAYER_COPY solo lo va a usar root, asi que se podria hacer aqui un
-	 * control de la memoria reservada */
-	float *layer = (float *)malloc( sizeof(float) * layer_size );
+	/* LAYER y LAYER_COPY solo lo va a usar root */
+	float *layer;
 	float *layer_copy;
-	if ( layer == NULL) {
-		fprintf(stderr,"Error: Allocating the layer memory\n");
-		exit( EXIT_FAILURE );
-	}
-
-	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
-
-	if (ROOT_RANK==rank){
+	if (ROOT_RANK==0){
+		layer = (float *)malloc( sizeof(float) * layer_size );
 		layer_copy = (float *)malloc( sizeof(float) * layer_size );
-		if ( layer_copy == NULL) {
+		if ( layer == NULL || layer_copy == NULL ) {
 			fprintf(stderr,"Error: Allocating the layer memory\n");
 			exit( EXIT_FAILURE );
 		}
+		for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
 		for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
 	}
+	
+	/* Idea nueva. Paralelizar la busqueda de maximos */
 
-
-	/* Planteamos un scatterv que divida la capa en porciones para cada proceso.
+	/* Planteamos un scatterv que divida la capa en porciones para cada proceso. Para el cálculo de máximo
 	 *	*sendbuf = layer del root, es el que se envía
 	 *  *sendcount =  array de número de elementos a cada proceso.
 	 *  *desplazamiento
@@ -192,7 +186,7 @@ int main(int argc, char *argv[]) {
 	 *  root -> ROOT_RANK
 	 *  MPI_COmm
 	 */
-	int proceso, scount=0;
+	int proceso;
 	int *sendcount = (int *)malloc( sizeof(int) * size );
 	for (k=0; k<size; k++) sendcount[k]=0;
 	int *desplazamiento = (int *)malloc( sizeof(int) * size );
@@ -204,7 +198,6 @@ int main(int argc, char *argv[]) {
 		if (proceso > 0) desplazamiento[proceso] = desplazamiento[proceso-1] + sendcount[proceso-1];
 	}
 
-	/* Cada proceso trabaja con una particion de la capa */
 	float *layer_local = (float *)malloc( sizeof(float) * sendcount[rank] );
 	for (k=0; k<sendcount[rank]; k++) layer_local[k]=0.0f;
 
@@ -213,63 +206,58 @@ int main(int argc, char *argv[]) {
 
 	/* 4. Fase de bombardeos */
 	for( i=0; i<num_storms; i++) {
-		MPI_Barrier(MPI_COMM_WORLD);
-
-		/* Rellenamos el layer local con la parte que le toca a cada proceso */
-		for (j=0 ; j<dominio ; j++){
-			layer_local[j] = layer[inicio+j];
-		}
-
-		for( j=0; j<storms[i].size; j++ ) {
-			int posicion = storms[i].posval[j*2];
-			float energia = (float)storms[i].posval[j*2+1] / 1000;
-
-			/* Cada proceso opera con su layer_local */
-			for( k=0; k<sendcount[rank]; k++ ) {
-				/* Actualizar posicion */
-				int distancia = posicion - (k+desplazamiento[rank]);
-				if ( distancia < 0 ) distancia = - distancia;
-				distancia = distancia + 1;
-				float atenuacion = sqrtf( (float)distancia );
-				float energia_k = energia / atenuacion;
-				if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
-					layer_local[k] = layer_local[k] + energia_k;
-			}
-		}
-
-		/* Recopilamos los datos con un Gatterv */
-
-		MPI_Gatherv( layer_local, sendcount[rank], MPI_FLOAT, layer, sendcount, desplazamiento, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
-		
-		/* El proceso 0 tiene recopilado todo en layer */
-
-		if (rank==ROOT_RANK){ 
-			for( k=0; k<layer_size; k++ ){ 
+		/* El proceso ROOT realiza la simulación */
+		if (rank==ROOT_RANK) {
+			/* 4.1. Fase de golpeo de particulas */
+			for( j=0; j<storms[i].size; j++ ) {
+				int posicion = storms[i].posval[j*2];
+				float energia = (float)storms[i].posval[j*2+1] / 1000;
+				/* Cada proceso opera con su layer_local */
+				for( k=0; k<layer_size; k++ ) {
+					/* Actualizar posicion */
+					int distancia = posicion - (k+desplazamiento[rank]);
+					if ( distancia < 0 ) distancia = - distancia;
+					distancia = distancia + 1;
+					float atenuacion = sqrtf( (float)distancia );
+					float energia_k = energia / atenuacion;
+					if ( energia_k >= UMBRAL || energia_k <= -UMBRAL )
+						layer[k] = layer[k] + energia_k;
+				}
+			} /* 4.2. Copia de layer_copy */
+			for( k=0; k<layer_size; k++ )
 				layer_copy[k] = layer[k];
-			}
+			/* 4.3. Fase de relajacion */
 			for( k=1; k<layer_size-1; k++ )
 				layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
-
-			/* 4.3. Localizar maximo */
-			for( k=1; k<layer_size-1; k++ ) {
-				if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
-					if ( layer[k] > maximos[i] ) {
-						maximos[i] = layer[k];
-						posiciones[i] = k;
-					}
-				}
+		}
+		/* Repartimos la capa entre los procesos */
+		MPI_Scatterv( layer, sendcount, desplazamiento, MPI_FLOAT, layer_local, sendcount[rank], MPI_FLOAT, 0, MPI_COMM_WORLD );
+		/* 4.3. Cada proceso localiza el maximo de su layer_local */
+		/* El máximo no puede ser ni la primera ni la ultima posicion de LAYER (afecta al primer y ultimo proceso) */
+		int inicio = rank == 0 ? 1 : 0;
+		int final = rank == size - 1 ? sendcount[rank]-1 : sendcount[rank];
+		/* Estructura para poder enviar el maximo y su posicion */
+		struct {
+			float maximo;
+			int posicion;
+		} local, global; // Dos variables que contienen el máximo y posicion local, y otra la global por tormenta
+		local.maximo = 0;
+		for( k=inicio; k<final; k++ ) {
+			/* Comprobación de maximo */
+			if ( layer_local[k] > local.maximo ) {
+				local.maximo = layer_local[k];
+				local.posicion = k + desplazamiento[rank];
 			}
+		}
+		/* Reducimos los maximos locales sobre el máximo global */
+		MPI_Reduce(&local, &global, 1, MPI_FLOAT_INT, MPI_MAXLOC, ROOT_RANK, MPI_COMM_WORLD);
+		/* Actualizacion del maximo global */
+		if (rank==ROOT_RANK) {
+			maximos[i] = global.maximo;
+			posiciones[i] = global.posicion;
 		} //end for each particle in storm
-
-		MPI_Bcast( layer, layer_size, MPI_FLOAT, ROOT_RANK, MPI_COMM_WORLD );
-		MPI_Barrier(MPI_COMM_WORLD);
 	} //end foreach storm
 
-	free(layer);
-	free(layer_local);
-	free(desplazamiento);
-	free(sendcount);
-	
 	/* -------------------------------------------------------- */
 	/* FINAL: No optimizar/paralelizar por debajo de este punto */
 	/* 5. Final de medida de tiempo */
