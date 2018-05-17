@@ -1,1 +1,1 @@
-python ./client.dms -q cuda -u g04 -x 0DAkBf9r ./src/EseDulce.cu
+python ./client.dms -q cudalb -u g04 -x 0DAkBf9r ./src/EseDulce.cu
