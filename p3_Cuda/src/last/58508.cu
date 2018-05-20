@@ -115,8 +115,8 @@
 		 storms[i-2] = read_storm_file( argv[i] );
  
 	 /* 1.3. Inicializar maximos a cero */
-	 float maximo[1], maximos[ num_storms ];
-	 int posicion[1], posiciones[ num_storms ];
+	 float maximos[ num_storms ];
+	 int posiciones[ num_storms ];
 	 for (i=0; i<num_storms; i++) {
 		 maximos[i] = 0.0f;
 		 posiciones[i] = 0;
@@ -132,8 +132,6 @@
 	 /* 3. Reservar memoria para las capas e inicializar a cero */
 	 float *layer = (float *)malloc( sizeof(float) * layer_size );
 	 float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
-	 float *posicion = (float *)malloc( sizeof(int) );
-	 float *maximo = (float *)malloc( sizeof(float) );
 	 if ( layer == NULL || layer_copy == NULL ) {
 		 fprintf(stderr,"Error: Allocating the layer memory\n");
 		 exit( EXIT_FAILURE );
@@ -146,14 +144,8 @@
 	// Reservamos e iniciamos la memoria necesaria en DEVICE
 	float *layer_device;
 	float *layer_device_copy;
-	float *d_maximo;
-	int *d_posicion;
-	cudaMalloc((void**) &layer_device, (float) layer_size*sizeof(float));
-	cudaMalloc((void**) &layer_device_copy, (float) layer_size*sizeof(float));
-	cudaMalloc((void**) &d_posicion, (float) sizeof(int));
-	cudaMalloc((void**) &d_maximo, (float) sizeof(float));
- 	cudaMemcpy(d_maximo, maximo, sizeof(float), cudaMemcpyHostToDevice );
- 	cudaMemcpy(d_posicion, posicion, sizeof(int), cudaMemcpyHostToDevice );
+	cudaMalloc((void**) &layer_device,(float) layer_size*sizeof(float));
+	cudaMalloc((void**) &layer_device_copy,(float) layer_size*sizeof(float));
  	cudaMemcpy(layer_device, layer, layer_size * sizeof(float), cudaMemcpyHostToDevice );
 	cudaMemcpy(layer_device_copy, layer_copy, layer_size * sizeof(float), cudaMemcpyHostToDevice );
  
@@ -178,13 +170,18 @@
 		// Proceso de relajacion paralelizado en HOST
 		gpu_Relajacion<<<BLOQUES, HILOS>>>(layer_device, layer_device_copy, layer_size);
  
-		gpu_Maximo<<<1,1>>>(d_maximo, d_posicion, layer_device, layer_size);
-		cudaMemcpy(maximo, d_maximo, sizeof(float), cudaMemcpyDeviceToHost );
-		cudaMemcpy(posicion, d_posicion, sizeof(int), cudaMemcpyDeviceToHost );
-		if (maximo != 0){
-			maximos[i] = maximo;
-			posiciones[i] = posicion;	
-		}	
+		// Tramos el valor de la capa para calcular máximos
+		cudaMemcpy(layer, layer_device, layer_size*sizeof(float), cudaMemcpyDeviceToHost );
+ 
+		// Calculamos máximos en HOST => Hay que paralelizarlo
+		 for( k=1; k<layer_size-1; k++ ) {
+			 if ( layer[k] > layer[k-1] && layer[k] > layer[k+1] ) {
+				 if ( layer[k] > maximos[i] ) {
+					 maximos[i] = layer[k];
+					 posiciones[i] = k;
+				 }
+			 }
+		 }
 	 }
  
 	 //Liberamos memoria
@@ -194,7 +191,6 @@
 	 /* FINAL: No optimizar/paralelizar por debajo de este punto */
  
 	 /* 6. Final de medida de tiempo */
-	 cudaDeviceSynchronize();
 	 ttotal = cp_Wtime() - ttotal;
  
 	 /* 7. DEBUG: Dibujar resultado (Solo para capas con hasta 35 puntos) */

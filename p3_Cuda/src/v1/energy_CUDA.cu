@@ -147,29 +147,31 @@
 		 exit( EXIT_FAILURE );
 	 }
  
-	 /* Variable para controlar los errores */
+	 /* Variable para controlar el error devuelto */
 	 cudaError_t error;
- 
  
 	 /* Reservamos la memoria de la GPU */
 	 
 	 // layer
 	 error = cudaMalloc((void**) &d_layer, (float) layer_size*sizeof(float));
-	 if (error != cudaSuccess) printf("Error CUDA: %s \n", cudaGetErrorString(error));
+	 if (error != cudaSuccess)
+	 	printf("Error CUDA: %s \n", cudaGetErrorString(error));
  
 	 // layer_copy
 	 error = cudaMalloc((void**) &d_layerCopy, (float) layer_size*sizeof(float));
-	 if (error != cudaSuccess) printf("Error CUDA: %s \n", cudaGetErrorString(error));
+	 if (error != cudaSuccess)
+	 	printf("Error CUDA: %s \n", cudaGetErrorString(error));
  
 	 // valor del maximo
 	 error = cudaMalloc((void**) &d_max, (float) num_storms*sizeof(float));
-	 if (error != cudaSuccess) printf("Error CUDA: %s \n", cudaGetErrorString(error));
+	 if (error != cudaSuccess)
+	 	printf("Error CUDA: %s \n", cudaGetErrorString(error));
  
 	 // posiciones del maximo
 	 error = cudaMalloc((void**) &d_pos, (int) num_storms*sizeof(int));
-	 if (error != cudaSuccess) printf("Error CUDA: %s \n", cudaGetErrorString(error));
+	 if (error != cudaSuccess)
+	 	printf("Error CUDA: %s \n", cudaGetErrorString(error));
  
-	 /* Inicialización de vectores */
 	 for(k=0 ; k<layer_size ; k++) {
 		 layer[k] = 0.0f;
 		 layer_copy[k] = 0.0f;
@@ -179,15 +181,16 @@
 	 for(i=0 ; i<num_storms ; i++) {
  
 		 /* 4.1. Suma energia de impactos */
-		 /* Para cada particula */
- 
-		 /* Copia de datos del HOST al DEVICE */
+
 		 // copiamos layer a GPU
-		 error = cudaMemcpy(d_layer, layer, layer_size * sizeof(float), cudaMemcpyHostToDevice);
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 error = cudaMemcpy(d_layer, layer, layer_size*sizeof(float), cudaMemcpyHostToDevice);
+		 if (error != cudaSuccess)
+		 	printf("Error CUDA: %s \n", cudaGetErrorString(error));
+
 		 // copiamos layer_copy en GPU
-		 error = cudaMemcpy(d_layerCopy, layer_copy, layer_size * sizeof(float), cudaMemcpyHostToDevice);
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 error = cudaMemcpy(d_layerCopy, layer_copy, layer_size*sizeof(float), cudaMemcpyHostToDevice);
+		 if (error != cudaSuccess)
+		 	printf("Error CUDA: %s \n", cudaGetErrorString(error));
  
 		 // tamaños de los bloques y grid
 		 dim3 nThreads(MAX_THREADS_PER_BLOCK);
@@ -207,17 +210,21 @@
  
 		 /* 4.2.2. Actualizamos la capa sin contar los extremos */
 		 // Atenuacion
-		 gpuAtenuacion<<<nThreads, nBlocks>>>(d_layer, d_layerCopy, layer_size);
+		 // gpuAtenuacion<<<nThreads, nBlocks>>>(d_layer, d_layerCopy, layer_size);
  
+		 for( k=1; k<layer_size-1; k++ ) layer[k] = ( layer_copy[k-1] + layer_copy[k] + layer_copy[k+1] ) / 3;
+
 		 /* 4.3. Localizamos maximo */
  
 		 /* enviamos los datos de maximos al gpu */
  
 		 error = cudaMemcpy(d_max, maximos, num_storms*sizeof(float), cudaMemcpyHostToDevice);
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 if (error != cudaSuccess)
+		 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 		 error = cudaMemcpy(d_pos, posiciones, num_storms*sizeof(int), cudaMemcpyHostToDevice);
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 if (error != cudaSuccess)
+		 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 		 /* Calculamos los maximos */
  
@@ -226,32 +233,39 @@
 		 /* traemos los datos al host de nuevo */
  
 		 error = cudaMemcpy(layer_copy, d_layerCopy, layer_size*sizeof(float), cudaMemcpyDeviceToHost );
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 if (error != cudaSuccess)
+			 printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 		 error = cudaMemcpy(layer, d_layer, layer_size*sizeof(float), cudaMemcpyDeviceToHost );
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 if (error != cudaSuccess) 
+		 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 		 error = cudaMemcpy(maximos, d_max, num_storms*sizeof(float), cudaMemcpyDeviceToHost );
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 if (error != cudaSuccess) 
+		 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 		 error = cudaMemcpy(posiciones, d_pos, num_storms*sizeof(int), cudaMemcpyDeviceToHost );
-		 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+		 if (error != cudaSuccess) 
+		 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 	 }
  
 	 /* liberamos la memoria en el gpu */
  
 	 error = cudaFree(d_layer);
-	 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+	 if (error != cudaSuccess) 	
+		printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 	 error = cudaFree(d_layerCopy);
-	 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+	 if (error != cudaSuccess) 
+	 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 	 error = cudaFree(d_max);
-	 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+	 if (error != cudaSuccess) printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 	 error = cudaFree(d_pos);
-	 if (error != cudaSuccess) printf("ErrCUDA: %s\n", cudaGetErrorString(error));
+	 if (error != cudaSuccess) 
+	 	printf("Error CUDA: %s\n", cudaGetErrorString(error));
  
 	 /*----------------------------------------------------------*/
 	 /* FINAL: No optimizar/paralelizar por debajo de este punto */
