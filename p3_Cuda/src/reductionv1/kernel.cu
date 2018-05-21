@@ -23,33 +23,33 @@ __global__ void gpu_Relajacion(float *layer, float *layer_copy, int layer_size) 
 }
 
 
-__global__ void gpu_getMaximo(float* maximos, float* positions, int size){
+__global__ void gpu_reduceMaximo(float* g_candidatos, float* positions, int size){
 
 	int gid = (blockIdx.x  + gridDim.x  * blockIdx.y) * (blockDim.x * blockDim.y) + (threadIdx.x + blockDim.x * threadIdx.y);
 	int s = size/2;
-	if ( gid >= s ) return;
+	if ( gid >= size/2) return;
 
-	if( maximos[ gid ] < maximos[ s + gid ] ) {
-		maximos[ gid ] = maximos[ s + gid ];
-		positions[gid] = positions[ s + gid ];
+	if(g_candidatos[ gid ] < g_candidatos[ gid + s]) {
+		g_candidatos[ gid ] = g_candidatos[ s + gid  ];
+		positions[gid] = positions[gid+s];
 	}
 	// Extra element
 	if ( size%2 != 0 && gid == 0 ){
-		if( maximos[ 0 ] < maximos[ size - 1 ] ) {
-			maximos[ 0 ] = maximos[ size - 1 ];
-			positions[ 0 ] = size-1;
+		if(g_candidatos[ 0 ] < g_candidatos[ size-1 ]) {
+			g_candidatos[ 0 ] = g_candidatos[ size-1 ];
+			positions[0] = size-1;
 		}
 	}
 
 }
 
 
-__global__ void gpu_reduceMaximos (float *layer, float *maxRelativos, int layer_size ){
+__global__ void gpu_obtenCandidatos (float *layer, float *candidatos, int layer_size ){
 
 	int gid = (blockIdx.x  + gridDim.x  * blockIdx.y) * (blockDim.x * blockDim.y) + (threadIdx.x + blockDim.x * threadIdx.y);
-	if ( gid > layer_size ) return;
-	maxRelativos[gid] = 0;
-	if ( gid == 0 || gid == layer_size-1 ) return;
-	if ( layer[gid] > layer[gid-1] && layer[gid] > layer[gid+1] ) maxRelativos[gid] = layer[gid];
+	if (gid > layer_size) return;
+	candidatos[gid] = 0;
+	if (gid == 0 || gid == layer_size-1) return;
+	if (layer[gid]>layer[gid-1] && layer[gid] > layer[gid+1]) candidatos[gid] = layer[gid];
 
 }

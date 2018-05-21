@@ -14,7 +14,7 @@
  #include"kernel.cu"
  
  #define PI	3.14159f
- #define HILOS 512
+ #define HILOS 128
  
  /* Estructura para almacenar los datos de una tormenta de particulas */
  typedef struct {
@@ -131,7 +131,8 @@
 	 /* COMIENZO: No optimizar/paralelizar el main por encima de este punto */
 
 	 /* 3. Reservar memoria para las capas e inicializar a cero */
-	 float *layer = (float *)malloc( sizeof(float) * layer_size );
+	 float *layer;
+	 *layer = cudaMallocHost(&layer,sizeof(float)*layer_size);
 	 float *layer_copy = (float *)malloc( sizeof(float) * layer_size );
 	 if ( layer == NULL || layer_copy == NULL ) {
 		 fprintf(stderr,"Error: Allocating the layer memory\n");
@@ -139,9 +140,11 @@
 	 }
  
 	// Iniciamos los vectores de HOST
+	/*
 	for( k=0; k<layer_size; k++ ) layer[k] = 0.0f;
 	for( k=0; k<layer_size; k++ ) layer_copy[k] = 0.0f;
-
+	 */
+	 
 	// Creamos la variable que comprobara los errores de CUDA
 	cudaError_t err;
 
